@@ -1,0 +1,389 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const params = new URLSearchParams(location.search);
+const scene2d = params.get('scene2d');
+const W = parseInt(params.get('w') || '900');
+const H = parseInt(params.get('h') || '1200');
+
+/* ============ 2D cinematic scenes ============ */
+function grain(ctx, w, h, amount = 0.05) {
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 255 * amount;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function vignette(ctx, w, h, strength = 0.55) {
+  const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function bokeh(ctx, w, h, color, count = 26) {
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * w, y = Math.random() * h;
+    const r = 6 + Math.random() * 46;
+    const a = 0.02 + Math.random() * 0.09;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color.replace('A', a.toFixed(3)));
+    g.addColorStop(1, color.replace('A', '0'));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function streaks(ctx, w, h, color, count = 14, yBase = 0.55) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < count; i++) {
+    const y = h * (yBase + (Math.random() - 0.5) * 0.5);
+    const x0 = -w * 0.2 + Math.random() * w * 0.4;
+    const len = w * (0.4 + Math.random() * 0.8);
+    const a = 0.04 + Math.random() * 0.16;
+    const th = 1 + Math.random() * 3.2;
+    const g = ctx.createLinearGradient(x0, y, x0 + len, y);
+    g.addColorStop(0, color.replace('A', '0'));
+    g.addColorStop(0.5, color.replace('A', a.toFixed(3)));
+    g.addColorStop(1, color.replace('A', '0'));
+    ctx.strokeStyle = g;
+    ctx.lineWidth = th;
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.bezierCurveTo(x0 + len * 0.3, y - h * 0.02 * Math.random(), x0 + len * 0.7, y + h * 0.02 * Math.random(), x0 + len, y - h * 0.01);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function horizonGlow(ctx, w, h, color, cy = 0.62, spread = 0.35) {
+  const g = ctx.createRadialGradient(w / 2, h * cy, 0, w / 2, h * cy, w * spread);
+  g.addColorStop(0, color.replace('A', '0.35'));
+  g.addColorStop(0.5, color.replace('A', '0.12'));
+  g.addColorStop(1, color.replace('A', '0'));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function baseSky(ctx, w, h, stops) {
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  stops.forEach(([p, c]) => g.addColorStop(p, c));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function roadPerspective(ctx, w, h, color, horizon = 0.62) {
+  // subtle converging lines suggesting a road at speed
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const cx = w * (0.4 + Math.random() * 0.2);
+  for (let i = 0; i < 9; i++) {
+    const spreadBase = (i / 9 - 0.5) * w * 2.2;
+    const a = 0.02 + Math.random() * 0.05;
+    const g = ctx.createLinearGradient(cx, h * horizon, cx + spreadBase, h * 1.1);
+    g.addColorStop(0, color.replace('A', a.toFixed(3)));
+    g.addColorStop(1, color.replace('A', '0'));
+    ctx.strokeStyle = g;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(cx, h * horizon);
+    ctx.lineTo(cx + spreadBase, h * 1.12);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function leatherTexture(ctx, w, h, base = '#15110d') {
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, w, h);
+  // cellular pattern
+  for (let i = 0; i < 2600; i++) {
+    const x = Math.random() * w, y = Math.random() * h;
+    const r = 2 + Math.random() * 9;
+    ctx.strokeStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.12})`;
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.arc(x, y, r, Math.random() * Math.PI, Math.random() * Math.PI + Math.PI * (0.6 + Math.random() * 0.9));
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(120,90,55,${0.02 + Math.random() * 0.05})`;
+    ctx.beginPath();
+    ctx.arc(x + 1, y + 1, r, Math.random() * Math.PI, Math.random() * Math.PI + Math.PI);
+    ctx.stroke();
+  }
+  // stitching lines
+  const sy = h * 0.78;
+  ctx.setLineDash([14, 10]);
+  ctx.strokeStyle = 'rgba(201,168,106,0.4)';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(0, sy);
+  ctx.quadraticCurveTo(w / 2, sy - h * 0.05, w, sy);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+const scenes2d = {
+  'lifestyle-1': (ctx, w, h) => { // The Night Route
+    baseSky(ctx, w, h, [[0, '#05060a'], [0.55, '#0b0d16'], [0.72, '#1a1410'], [1, '#08070a']]);
+    horizonGlow(ctx, w, h, 'rgba(210,140,60,A)', 0.66, 0.5);
+    roadPerspective(ctx, w, h, 'rgba(232,213,164,A)', 0.66);
+    streaks(ctx, w, h, 'rgba(255,180,90,A)', 20, 0.68);
+    streaks(ctx, w, h, 'rgba(200,60,40,A)', 8, 0.74);
+    bokeh(ctx, w, h, 'rgba(255,190,110,A)', 30);
+    vignette(ctx, w, h, 0.6); grain(ctx, w, h, 0.045);
+  },
+  'lifestyle-2': (ctx, w, h) => { // Cabin, Composed
+    leatherTexture(ctx, w, h, '#141009');
+    const g = ctx.createRadialGradient(w * 0.7, h * 0.25, 0, w * 0.7, h * 0.25, w * 0.8);
+    g.addColorStop(0, 'rgba(232,205,150,0.30)');
+    g.addColorStop(0.5, 'rgba(180,140,80,0.08)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    // window light bars
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 4; i++) {
+      const x = w * (0.15 + i * 0.2);
+      const lg = ctx.createLinearGradient(x, 0, x + w * 0.07, h);
+      lg.addColorStop(0, 'rgba(240,220,180,0.10)');
+      lg.addColorStop(1, 'rgba(240,220,180,0)');
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.moveTo(x, 0); ctx.lineTo(x + w * 0.06, 0); ctx.lineTo(x - w * 0.06, h); ctx.lineTo(x - w * 0.12, h);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    vignette(ctx, w, h, 0.65); grain(ctx, w, h, 0.05);
+  },
+  'lifestyle-3': (ctx, w, h) => { // Golden Meridian
+    baseSky(ctx, w, h, [[0, '#0a0709'], [0.45, '#2a160d'], [0.62, '#8a4416'], [0.68, '#c97a2e'], [0.74, '#3a1e10'], [1, '#080608']]);
+    horizonGlow(ctx, w, h, 'rgba(255,170,70,A)', 0.68, 0.45);
+    // sun disc
+    const g = ctx.createRadialGradient(w / 2, h * 0.68, 0, w / 2, h * 0.68, w * 0.09);
+    g.addColorStop(0, 'rgba(255,220,160,0.95)');
+    g.addColorStop(0.6, 'rgba(255,170,80,0.5)');
+    g.addColorStop(1, 'rgba(255,150,60,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(w / 2, h * 0.68, w * 0.09, 0, Math.PI * 2); ctx.fill();
+    // dark road band
+    ctx.fillStyle = 'rgba(5,4,5,0.85)';
+    ctx.fillRect(0, h * 0.8, w, h * 0.2);
+    roadPerspective(ctx, w, h, 'rgba(255,200,120,A)', 0.8);
+    streaks(ctx, w, h, 'rgba(255,180,90,A)', 10, 0.72);
+    vignette(ctx, w, h, 0.5); grain(ctx, w, h, 0.045);
+  },
+  'lifestyle-4': (ctx, w, h) => { // Coastal Santal
+    baseSky(ctx, w, h, [[0, '#070a0e'], [0.5, '#12202c'], [0.66, '#3a4a52'], [0.72, '#1a2228'], [1, '#06080a']]);
+    horizonGlow(ctx, w, h, 'rgba(180,210,220,A)', 0.66, 0.5);
+    // sea shimmer
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 60; i++) {
+      const y = h * (0.68 + Math.random() * 0.25);
+      const x = Math.random() * w;
+      const len = 10 + Math.random() * 80 * (y / h);
+      ctx.strokeStyle = `rgba(200,225,235,${0.02 + Math.random() * 0.07})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+    }
+    ctx.restore();
+    bokeh(ctx, w, h, 'rgba(200,220,230,A)', 18);
+    streaks(ctx, w, h, 'rgba(216,196,154,A)', 6, 0.4);
+    vignette(ctx, w, h, 0.55); grain(ctx, w, h, 0.05);
+  },
+  'insta-abstract-1': (ctx, w, h) => {
+    baseSky(ctx, w, h, [[0, '#0a0a0c'], [1, '#141014']]);
+    bokeh(ctx, w, h, 'rgba(232,213,164,A)', 46);
+    streaks(ctx, w, h, 'rgba(201,168,106,A)', 12, 0.5);
+    vignette(ctx, w, h, 0.5); grain(ctx, w, h, 0.05);
+  },
+  'insta-abstract-2': (ctx, w, h) => {
+    leatherTexture(ctx, w, h, '#100d0a');
+    const g = ctx.createRadialGradient(w * 0.3, h * 0.3, 0, w * 0.3, h * 0.3, w);
+    g.addColorStop(0, 'rgba(220,190,140,0.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    vignette(ctx, w, h, 0.6); grain(ctx, w, h, 0.05);
+  },
+  'insta-abstract-3': (ctx, w, h) => {
+    baseSky(ctx, w, h, [[0, '#06070c'], [0.6, '#101625'], [1, '#080a10']]);
+    horizonGlow(ctx, w, h, 'rgba(120,150,220,A)', 0.55, 0.5);
+    streaks(ctx, w, h, 'rgba(150,180,255,A)', 16, 0.6);
+    bokeh(ctx, w, h, 'rgba(180,200,255,A)', 24);
+    vignette(ctx, w, h, 0.55); grain(ctx, w, h, 0.05);
+  },
+};
+
+if (scene2d) {
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  scenes2d[scene2d](ctx, W, H);
+  window.__done = true;
+} else {
+  /* ============ 3D bottle scenes ============ */
+  const variant = params.get('variant') || 'noir';
+  const mode = params.get('mode') || 'product'; // product | story | closeup
+
+  const variants = {
+    noir:   { liquid: 0x3a2410, emissive: 0x150a02, cap: 0xc9a86a, key: 0xfff2dc, rim: 0xc9a86a },
+    santal: { liquid: 0xc9a35a, emissive: 0x2a1e08, cap: 0xd8c49a, key: 0xf5ead2, rim: 0xd8e0e5 },
+    ambre:  { liquid: 0xc06a1e, emissive: 0x321605, cap: 0xb59459, key: 0xffe8c0, rim: 0xe09a4a },
+  };
+  const v = variants[variant];
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(1);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = mode === 'story' ? 0.95 : 1.15;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  const camera = new THREE.PerspectiveCamera(mode === 'closeup' ? 24 : 30, W / H, 0.1, 60);
+  if (mode === 'closeup') camera.position.set(1.6, 2.6, 5.4);
+  else camera.position.set(0, 1.6, 8.2);
+  camera.lookAt(0, mode === 'closeup' ? 2.0 : 1.35, 0);
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  const pts = [
+    [0.0, 0.0], [0.72, 0.0], [0.86, 0.06], [0.94, 0.22], [0.97, 0.7],
+    [0.97, 1.5], [0.94, 1.98], [0.82, 2.22], [0.5, 2.38], [0.3, 2.44],
+    [0.28, 2.62], [0.28, 2.8],
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+
+  const glass = new THREE.Mesh(
+    new THREE.LatheGeometry(pts, 128),
+    new THREE.MeshPhysicalMaterial({
+      color: 0x0d0d10, metalness: 0, roughness: 0.05, transmission: 0.92, thickness: 1.4,
+      ior: 1.5, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.7, side: THREE.DoubleSide,
+    })
+  );
+  group.add(glass);
+
+  const liquidPts = pts.slice(0, 8).map((p) => new THREE.Vector2(p.x * 0.86, p.y * 0.92 + 0.05));
+  group.add(new THREE.Mesh(
+    new THREE.LatheGeometry(liquidPts, 96),
+    new THREE.MeshPhysicalMaterial({
+      color: v.liquid, metalness: 0, roughness: 0.22, transmission: 0.6, thickness: 2,
+      ior: 1.35, envMapIntensity: 0.9, emissive: v.emissive, emissiveIntensity: 0.7,
+    })
+  ));
+
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34, 0.34, 0.62, 96),
+    new THREE.MeshPhysicalMaterial({ color: v.cap, metalness: 1, roughness: 0.2, envMapIntensity: 1.8 })
+  );
+  cap.position.y = 3.05;
+  group.add(cap);
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.335, 0.02, 24, 96),
+    new THREE.MeshPhysicalMaterial({ color: 0xe8d5a4, metalness: 1, roughness: 0.1, envMapIntensity: 2 })
+  );
+  ring.rotation.x = Math.PI / 2; ring.position.y = 2.78;
+  group.add(ring);
+
+  const names = { noir: 'NOIR OUD', santal: 'SANTAL ROUTE', ambre: 'AMBRE MÉRIDIEN' };
+  const labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 640; labelCanvas.height = 300;
+  const lc = labelCanvas.getContext('2d');
+  const lg = lc.createLinearGradient(0, 0, 640, 300);
+  lg.addColorStop(0, '#a8854e'); lg.addColorStop(0.4, '#d9c08c'); lg.addColorStop(0.6, '#c2a068'); lg.addColorStop(1, '#93743f');
+  lc.fillStyle = lg; lc.fillRect(0, 0, 640, 300);
+  lc.strokeStyle = 'rgba(40,28,10,0.55)'; lc.lineWidth = 4; lc.strokeRect(18, 18, 604, 264);
+  lc.fillStyle = '#241a08'; lc.textAlign = 'center';
+  lc.letterSpacing = '16px';
+  lc.font = '300 72px Georgia, serif';
+  lc.fillText('VELOURE', 336, 152);
+  lc.letterSpacing = '6px';
+  lc.font = '300 30px Georgia, serif';
+  lc.fillText(names[variant], 323, 216);
+  lc.font = '24px Georgia, serif';
+  lc.fillText('PARFUMS D\u2019AUTOMOBILE', 323, 72);
+  const labelTex = new THREE.CanvasTexture(labelCanvas);
+  labelTex.colorSpace = THREE.SRGBColorSpace;
+  const plaque = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.9, 0.42),
+    new THREE.MeshPhysicalMaterial({ map: labelTex, metalness: 0.85, roughness: 0.38, envMapIntensity: 1.2 })
+  );
+  plaque.position.set(0, 1.25, 0.975);
+  group.add(plaque);
+
+  if (mode === 'closeup') {
+    scene.background = new THREE.Color(0x0d0c10);
+    const glowCanvas = document.createElement('canvas');
+    glowCanvas.width = 512; glowCanvas.height = 512;
+    const gc = glowCanvas.getContext('2d');
+    const gg = gc.createRadialGradient(256, 256, 0, 256, 256, 256);
+    gg.addColorStop(0, 'rgba(201,168,106,0.28)');
+    gg.addColorStop(1, 'rgba(13,12,16,0)');
+    gc.fillStyle = gg; gc.fillRect(0, 0, 512, 512);
+    const glowTex = new THREE.CanvasTexture(glowCanvas);
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(14, 14),
+      new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false })
+    );
+    glow.position.set(0, 2, -4);
+    scene.add(glow);
+  }
+
+  if (mode === 'story') {
+    // leather-ish floor + backdrop
+    const floorTexCanvas = document.createElement('canvas');
+    floorTexCanvas.width = 1024; floorTexCanvas.height = 1024;
+    leatherTexture(floorTexCanvas.getContext('2d'), 1024, 1024, '#171208');
+    const floorTex = new THREE.CanvasTexture(floorTexCanvas);
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(30, 30),
+      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.75, metalness: 0.05 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+    scene.background = new THREE.Color(0x0a0806);
+    scene.fog = new THREE.Fog(0x0a0806, 8, 22);
+    group.rotation.y = 0.4;
+  }
+
+  const key = new THREE.SpotLight(v.key, 70, 40, 0.5, 0.6);
+  key.position.set(4.5, 6, 5);
+  scene.add(key);
+  const rim = new THREE.SpotLight(v.rim, 55, 40, 0.6, 0.7);
+  rim.position.set(-5, 3.5, -3);
+  scene.add(rim);
+  scene.add(new THREE.AmbientLight(0x404050, mode === 'story' ? 0.5 : 0.3));
+
+  group.rotation.y += mode === 'closeup' ? -0.5 : 0.15;
+  renderer.render(scene, camera);
+  window.__done = true;
+}
+</script>
+</body>
+</html>

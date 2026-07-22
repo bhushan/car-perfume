@@ -2,6 +2,9 @@
 
 Premium D2C website for a luxury car perfume brand. Dark-theme minimal luxury, cinematic animations, real-time 3D hero bottle.
 
+**Live site:** https://bhushan.github.io/car-perfume/
+**Repository:** https://github.com/bhushan/car-perfume
+
 ## Stack
 
 - Next.js 14 (App Router) + TypeScript
@@ -33,6 +36,22 @@ npm run build && npm start
 ## Imagery pipeline
 
 `node scripts/shoot.mjs` re-renders every product/lifestyle image headlessly (Chromium + Three.js/canvas). Swap in real photos anytime; all references live in `src/lib/data.ts`.
+
+## Deployment (GitHub Pages)
+
+The site ships as a static export (`output: 'export'`) served from GitHub Pages at
+`https://bhushan.github.io/car-perfume/`. The `/car-perfume` base path is applied only in
+production builds, so `next dev` still runs cleanly at `http://localhost:3000/`.
+
+Deploys are **manual** via GitHub Actions (`.github/workflows/deploy.yml`, `workflow_dispatch` only):
+
+```bash
+gh workflow run deploy.yml --ref main   # build static export + publish to Pages
+gh run watch                            # follow the run to completion
+```
+
+The workflow runs `npm ci && npm run build`, adds `.nojekyll`, and publishes `out/` with
+`actions/deploy-pages`. Pages source must be set to **GitHub Actions** (Settings → Pages).
 
 ## Notes
 
